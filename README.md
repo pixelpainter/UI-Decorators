@@ -3,7 +3,7 @@ All node widgets are linkable and promotable from the SubGraph canvas.<br/>
 $\color{Aquamarine}{\textbf{Please watch the short video at the end of the description for a clear explanation of usage and functionailty.}}$<br/>
 
 ### $\color{Orange}{\textbf{UI Note}}$
-A node with a Note widget which can be linked or promoted to the front of the SubGraph node. The Note has editable font size, an option to bold the text, and a color picker for the background color, and the font color, or simnply change the colors using hex values.
+A node with a Note widget which can be linked or promoted to the front of the SubGraph node. The Note has editable font size, an option to bold the text, and a color picker for the background color, and the font color, or simnly change the colors using hex values.
 
 <img width="293" height="327" alt="image" src="https://github.com/user-attachments/assets/8f105c6b-9b87-4678-a263-de5bd411ecf9" />
 

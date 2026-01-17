@@ -1,4 +1,4 @@
-UI Decorators is a set of 4 nodes to enhance frontside SubGraph usability and organization.<br/>
+UI Decorators for Comfyi is a set of 4 nodes to enhance frontside SubGraph usability and organization.<br/>
 All node widgets are linkable and promotable from the SubGraph canvas.<br/>   
 $\color{Aquamarine}{\textbf{Please watch the short video at the end of the description for a clear explanation of usage and functionailty.}}$<br/>
 

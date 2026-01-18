@@ -259,61 +259,48 @@ function makeUIDividerFactory() {
             draw: function(ctx, n, widgetWidth, y) {
                 if (_isTitleAttached) return;
 
-                const isInner = isInnerDecoratorNode(n);
-                const pad = DIVIDER_PAD_TOP;
-let color = "#666666";
+		        const isInner = isInnerDecoratorNode(n);
+		        const pad = DIVIDER_PAD_TOP;
+		        let color = "#666666";
 
-                if (isInner) {
-                    if (inputName === "divider_in") {
-                        color = parseHex(getProp(n, propKey("title_color"), "#ffffff"));
-                    } else {
-                        color = parseHex(getProp(n, propKey("divider_color"), "#ffffff"));
-                    }
-                } else {
-                    const g = getInnerGraph(n);
-                    if (g) {
-                        const innerNodes = g._nodes ?? g.nodes ?? [];
-                        const allDividerSources = innerNodes
-                            .filter(inNode => inNode.comfyClass === "DividerNode" || inNode.comfyClass === "TitleNode")
-                            .sort((a, b) => (a.pos?.[1] ?? 0) - (b.pos?.[1] ?? 0));
+		        // IMPORTANT: Divider color must NEVER come from a TitleNode.
+		        // When the widget is shown on the Subgraph front node (linked OR promoted),
+		        // we must match it ONLY to inner DividerNode instances. Otherwise, the
+		        // divider will "steal" title_color (red) via index/fallback matching.
+		        if (isInner) {
+		            color = parseHex(getProp(n, propKey("divider_color"), "#666666"));
+		        } else {
+		            const g = getInnerGraph(n);
+		            if (g) {
+		                const innerNodes = g._nodes ?? g.nodes ?? [];
+		                const validDividers = innerNodes
+		                    .filter(inNode => inNode.comfyClass === "DividerNode")
+		                    .sort((a, b) => (a.pos?.[1] ?? 0) - (b.pos?.[1] ?? 0));
 
-                        let matchedNode = null;
+		                let matchedNode = null;
 
-                        const idMatch = this.name.match(/^(\d+):/);
-                        if (idMatch) {
-                            const nodeId = parseInt(idMatch[1]);
-                            matchedNode = allDividerSources.find(n => n.id === nodeId);
-                        }
+		                // Promotion usually prefixes the widget name with "<innerId>:..."
+		                const idMatch = this.name.match(/^(\d+):/);
+		                if (idMatch) {
+		                    const nodeId = parseInt(idMatch[1]);
+		                    matchedNode = validDividers.find(nn => nn.id === nodeId) || null;
+		                }
 
-                        if (!matchedNode) {
-                            const myIndex = n.widgets.indexOf(this);
-                            const prevWidget = myIndex > 0 ? n.widgets[myIndex - 1] : null;
-                            if (prevWidget && prevWidget.isDecoratorTitle) {
-                                const titleText = prevWidget.value;
-                                matchedNode = innerNodes.find(inNode => 
-                                    inNode.comfyClass === "TitleNode" && 
-                                    getProp(inNode, propKey("title_text"), "Section Title") === titleText
-                                );
-                            }
-                        }
+		                // Linking often does NOT include the inner node id in the widget name,
+		                // so fall back to stable vertical-order index matching among divider widgets.
+		                if (!matchedNode) {
+		                    const outerDividers = n.widgets.filter(wd => wd.type === "ui_divider");
+		                    const myOuterIndex = outerDividers.indexOf(this);
+		                    if (myOuterIndex >= 0 && myOuterIndex < validDividers.length) {
+		                        matchedNode = validDividers[myOuterIndex];
+		                    }
+		                }
 
-                        if (!matchedNode) {
-                            const outerDividers = n.widgets.filter(wd => wd.type === "ui_divider");
-                            const myOuterIndex = outerDividers.indexOf(this);
-                            if (myOuterIndex >= 0 && myOuterIndex < allDividerSources.length) {
-                                matchedNode = allDividerSources[myOuterIndex];
-                            }
-                        }
-
-                        if (matchedNode) {
-                            if (matchedNode.comfyClass === "TitleNode") {
-                                color = parseHex(getProp(matchedNode, propKey("title_color"), "#ffffff"));
-                            } else {
-                                color = parseHex(getProp(matchedNode, propKey("divider_color"), "#666666"));
-                            }
-                        }
-                    }
-                }
+		                if (matchedNode) {
+		                    color = parseHex(getProp(matchedNode, propKey("divider_color"), "#666666"));
+		                }
+		            }
+		        }
 
                 drawDividerLine(ctx, widgetWidth, y, color, pad);
             },

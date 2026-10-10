@@ -21,7 +21,7 @@ class DividerNode:
 
     RETURN_TYPES = ()
     FUNCTION = "out"
-    CATEGORY = "Custom/UI Decorators"
+    CATEGORY = "UI Decorators"
     OUTPUT_NODE = True
 
     def out(self, divider):

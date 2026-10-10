@@ -52,6 +52,169 @@ function isInnerDecoratorNode(n) {
     return n?.comfyClass === "TitleNode" || n?.comfyClass === "DividerNode" || n?.comfyClass === "SpacerNode" || n?.comfyClass === "NoteNode";
 }
 
+/* ---------------- node height refit (keeps width) ---------------- */
+function fitNodeHeight(n) {
+    if (!n || typeof n.computeSize !== "function" || typeof n.setSize !== "function") return;
+    const sz = n.computeSize();
+    sz[0] = n.size[0];
+    n.setSize(sz);
+    n.setDirtyCanvas?.(true, true);
+}
+
+/* ---------------- keep a linked widget editable ----------------
+   Newer frontends mark a widget disabled (dimmed, not clickable) once its
+   input is linked. Title/Note text must stay editable on the inner node.
+------------------------------------------------------------------ */
+function keepWidgetEnabled(w) {
+    try {
+        Object.defineProperty(w, "computedDisabled", {
+            get() { return false; },
+            set(_v) {},
+            configurable: true,
+        });
+    } catch (e) { /* older frontends: nothing to do */ }
+}
+
+/* ---------------- inline multiline editor (Title / Note) ----------------
+   Click the text (inner node or subgraph front) to edit it in place.
+   Every keystroke is applied immediately (stored in node properties, so it
+   is saved with the workflow). Click away or press Esc to close.
+--------------------------------------------------------------------------- */
+let __uiInlineEditor = null;
+
+function closeInlineEditor() {
+    const st = __uiInlineEditor;
+    if (!st) return;
+    __uiInlineEditor = null;
+    cancelAnimationFrame(st.raf);
+    st.widget.__uiEditing = false;
+    try { st.ta.remove(); } catch (e) {}
+    st.node.setDirtyCanvas?.(true, true);
+    st.canvas.setDirty?.(true, true);
+}
+
+function openInlineEditor(widget, node, canvas, kind) {
+    closeInlineEditor();
+    if (!canvas?.canvas || !canvas.ds || !node) return;
+    const styleNode = isInnerDecoratorNode(node) ? node : (widget.__uiDecorSrcNode || null);
+    if (!styleNode) return;
+
+    const ta = document.createElement("textarea");
+    ta.value = (widget.value ?? "").toString();
+    ta.spellcheck = false;
+    Object.assign(ta.style, {
+        position: "fixed", zIndex: "10000", margin: "0", border: "none",
+        outline: "1px dashed rgba(255,255,255,0.45)", resize: "none", overflow: "hidden",
+        background: "transparent", boxSizing: "border-box",
+        whiteSpace: kind === "title" ? "pre" : "pre-wrap",
+        fontFamily: "Inter, system-ui, sans-serif",
+    });
+
+    const st = { ta, widget, node, canvas, kind, styleNode, raf: 0 };
+
+    const place = () => {
+        const ds = canvas.ds;
+        const s = ds.scale;
+        const rect = canvas.canvas.getBoundingClientRect();
+        const toScreen = (gx, gy) => [rect.left + (gx + ds.offset[0]) * s, rect.top + (gy + ds.offset[1]) * s];
+        const wy = widget.last_y ?? widget.y ?? 0;
+        const W = node.size[0];
+        let fontSize, bold, color, gx, gy, gw, minH, lineH, padL, padT, padB;
+        if (kind === "title") {
+            fontSize = Number(getProp(styleNode, propKey("title_font_size"), 14));
+            bold = !!getProp(styleNode, propKey("title_bold"), false);
+            color = parseHex(getProp(styleNode, propKey("title_color"), "#ffffff"));
+            lineH = fontSize + 4;
+            gx = node.pos[0] + 8; gy = node.pos[1] + wy; gw = W - 16;
+            padL = 4; padT = TITLE_PAD_TOP; padB = TITLE_PAD_BOTTOM;
+            minH = padT + padB + lineH;
+        } else {
+            fontSize = Number(getProp(styleNode, propKey("note_font_size"), 12));
+            bold = !!getProp(styleNode, propKey("note_bold"), false);
+            color = parseHex(getProp(styleNode, propKey("note_color"), "#aaaaaa"));
+            lineH = fontSize * NOTE_LINE_HEIGHT_MULT;
+            const margin = 10;
+            gx = node.pos[0] + margin; gy = node.pos[1] + wy + NOTE_PAD_TOP; gw = W - margin * 2;
+            padL = NOTE_INNER_PAD_X; padT = NOTE_INNER_PAD_TOP; padB = NOTE_INNER_PAD_BOTTOM;
+            minH = padT + padB + lineH;
+        }
+        const [sx, sy] = toScreen(gx, gy);
+        Object.assign(ta.style, {
+            left: `${sx}px`, top: `${sy}px`, width: `${gw * s}px`,
+            fontSize: `${fontSize * s}px`, lineHeight: `${lineH * s}px`,
+            fontWeight: bold ? "700" : "400", color,
+            padding: `${padT * s}px ${padL * s}px ${padB * s}px ${padL * s}px`,
+        });
+        ta.style.height = "0px";
+        ta.style.height = `${Math.max(minH * s, ta.scrollHeight)}px`;
+    };
+
+    const apply = () => {
+        const v = ta.value;
+        if (typeof widget.callback === "function") widget.callback(v);
+        else widget.value = v;
+        if (kind === "title") {
+            fitNodeHeight(node);
+            if (styleNode !== node) fitNodeHeight(styleNode);
+        }
+        if (isInnerDecoratorNode(node)) refitParentSubgraphNodes(node);
+        node.setDirtyCanvas?.(true, true);
+        canvas.setDirty?.(true, true);
+        place();
+    };
+
+    ta.addEventListener("input", apply);
+    ta.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Escape") { e.preventDefault(); ta.blur(); }
+    });
+    ta.addEventListener("pointerdown", (e) => e.stopPropagation());
+    ta.addEventListener("wheel", (e) => e.stopPropagation());
+    ta.addEventListener("blur", () => { if (__uiInlineEditor === st) closeInlineEditor(); });
+
+    widget.__uiEditing = true;
+    __uiInlineEditor = st;
+    document.body.appendChild(ta);
+    place();
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+
+    const follow = () => {
+        if (__uiInlineEditor !== st) return;
+        if (canvas.graph !== node.graph) { closeInlineEditor(); return; }
+        place();
+        st.raf = requestAnimationFrame(follow);
+    };
+    st.raf = requestAnimationFrame(follow);
+}
+
+// Widget pointer hook (newer frontends call widget.onPointerDown first).
+function decorTextPointerDown(pointer, node, canvas) {
+    const widget = this;
+    const kind = widget?.__uiDecorKind;
+    if (kind !== "title" && kind !== "note") return false;
+    if (pointer) pointer.onClick = () => openInlineEditor(widget, node, canvas, kind);
+    else openInlineEditor(widget, node, canvas, kind);
+    return true;
+}
+
+/* ---------------- refit subgraph nodes that contain an inner node ---------------- */
+function refitParentSubgraphNodes(innerNode) {
+    try {
+        const inner = innerNode?.graph;
+        const root = app.graph;
+        if (!inner || !root || inner === root) return;
+        const graphs = [root, ...(root.subgraphs?.values?.() ?? [])];
+        for (const g of graphs) {
+            for (const n of (g?._nodes ?? g?.nodes ?? [])) {
+                if (n?.isSubgraphNode?.() && getInnerGraph(n) === inner) fitNodeHeight(n);
+            }
+        }
+    } catch (e) {
+        console.warn("[UI Decorators] subgraph refit failed:", e);
+    }
+}
+
 /* ---------------- graph traversal helper ---------------- */
 function getInnerGraph(outerNode) {
     return outerNode.subgraph ?? 
@@ -60,6 +223,113 @@ function getInnerGraph(outerNode) {
            outerNode.innerGraph ??
            (typeof outerNode.getInnerGraph === "function" ? outerNode.getInnerGraph() : null) ??
            (typeof outerNode.getSubgraph === "function" ? outerNode.getSubgraph() : null);
+}
+
+/* ---------------- new-frontend promoted host widgets ----------------
+   Newer frontends (createPromotedHostWidget on SubgraphNode) rebuild the
+   subgraph front widgets as bare value proxies with no draw/computeSize.
+   For decorator widgets we supply our own host widget that reuses the
+   inner widget's draw/computeSize and is matched to its inner node through
+   the subgraph input link. Older frontends never reach this path.
+--------------------------------------------------------------------- */
+function makeDecorHostWidget(hostNode, input, widgetId, src) {
+    // Store-bound proxy from the frontend, used only to keep the frontend's
+    // own copy of the front value in sync with the inner node.
+    let storeProxy = null;
+    try {
+        const proj = Object.getPrototypeOf(hostNode)?._projectPromotedWidget;
+        if (typeof proj === "function" && widgetId) {
+            storeProxy = proj.call(hostNode, { widgetId, name: input.name, label: input.label });
+        }
+    } catch (e) { storeProxy = null; }
+    const syncStore = (v) => { if (storeProxy) { try { storeProxy.value = v; } catch (e) {} } };
+
+    const host = {
+        get name() { return input.name; },
+        get label() { return input.label ?? input.name; },
+        set label(v) { input.label = v; },
+        type: src.type,
+        options: src.options ?? {},
+        y: 0,
+        get value() { return src.value; },
+        set value(v) { src.value = v; syncStore(v); },
+        callback(v) {
+            src.value = v;
+            if (typeof src.callback === "function") src.callback(v);
+            syncStore(v);
+            hostNode.setDirtyCanvas?.(true, true);
+        },
+        draw: src.draw,
+        onPointerDown: src.onPointerDown,
+        computeSize: src.computeSize,
+        __uiDecorKind: src.__uiDecorKind,
+        __uiDecorSrcNode: src.__uiDecorSrcNode || src.__uiDecorNode || null,
+    };
+    if (src.isDecoratorTitle) host.isDecoratorTitle = true;
+    Object.defineProperty(host, "widgetId", { value: widgetId, enumerable: false, configurable: true });
+    if (src.value !== undefined && src.value !== null) syncStore(src.value);
+    return host;
+}
+
+function findPromotedSourceWidget(hostNode, input) {
+    const slot = input?._subgraphSlot;
+    const sg = hostNode?.subgraph;
+    if (!slot || !sg || !slot.linkIds) return null;
+    for (const linkId of slot.linkIds) {
+        const link = sg.getLink?.(linkId);
+        if (!link || typeof link.resolve !== "function") continue;
+        const { inputNode, input: inSlot } = link.resolve(sg);
+        if (!inputNode || !inSlot) continue;
+        const w = inputNode.getWidgetFromSlot?.(inSlot);
+        if (w) return w;
+    }
+    return null;
+}
+
+function installDecorHostWidgets(node) {
+    if (!node?.isSubgraphNode?.() || typeof node.createPromotedHostWidget !== "function") return;
+    if (!node.__uiDecorHostPatched) {
+        const orig = node.createPromotedHostWidget;
+        node.createPromotedHostWidget = function (input, widgetId, sourceWidget) {
+            if (sourceWidget?.__uiDecorKind) return makeDecorHostWidget(this, input, widgetId, sourceWidget);
+            return orig.call(this, input, widgetId, sourceWidget);
+        };
+        // The frontend can also rebuild a front widget through
+        // _projectPromotedWidget (bypassing createPromotedHostWidget).
+        const origProject = node._projectPromotedWidget;
+        if (typeof origProject === "function") {
+            node._projectPromotedWidget = function (input) {
+                const cur = input?._widget;
+                if (cur?.__uiDecorKind) return cur;
+                if (input?.widgetId && !cur?.__uiDecorChecked) {
+                    const src = findPromotedSourceWidget(this, input);
+                    if (src?.__uiDecorKind) {
+                        input._widget = makeDecorHostWidget(this, input, input.widgetId, src);
+                        return input._widget;
+                    }
+                    const w = origProject.call(this, input);
+                    if (src && w && typeof w === "object") {
+                        Object.defineProperty(w, "__uiDecorChecked", { value: true, configurable: true });
+                    }
+                    return w;
+                }
+                return origProject.call(this, input);
+            };
+        }
+        node.__uiDecorHostPatched = true;
+    }
+    let changed = false;
+    for (const input of node.inputs ?? []) {
+        if (!input?.widgetId || input._widget?.__uiDecorKind) continue;
+        const src = findPromotedSourceWidget(node, input);
+        if (!src?.__uiDecorKind) continue;
+        input._widget = makeDecorHostWidget(node, input, input.widgetId, src);
+        changed = true;
+    }
+    if (changed) {
+        node.invalidatePromotedViews?.();
+        node.setDirtyCanvas?.(true, true);
+    }
 }
 
 /* ---------------- drawing helpers ---------------- */
@@ -134,6 +404,10 @@ function makeUITitleFactory() {
         );
 
         w.isDecoratorTitle = true;
+        w.__uiDecorKind = "title";
+        w.__uiDecorNode = node;
+        keepWidgetEnabled(w);
+        w.onPointerDown = decorTextPointerDown;
         w.serialize = true;
         w.serializeValue = () => getProp(node, kText, def);
 
@@ -155,8 +429,8 @@ function makeUITitleFactory() {
                     const innerNodes = g._nodes ?? g.nodes ?? [];
                     
                     const idMatch = this.name && this.name.match(/^(\d+):/);
-                    let matchedNode = null;
-                    if (idMatch) {
+                    let matchedNode = this.__uiDecorSrcNode || null;
+                    if (!matchedNode && idMatch) {
                         const nodeId = parseInt(idMatch[1]);
                         matchedNode = innerNodes.find(n => n.id === nodeId);
                     }
@@ -193,7 +467,13 @@ function makeUITitleFactory() {
             ctx.font = `${bold ? 700 : 400} ${fontSize}px Inter, system-ui, sans-serif`;
             ctx.fillStyle = color;
             ctx.textBaseline = "top";
-            ctx.fillText(txt, 12, textY);
+            if (!this.__uiEditing) {
+                const lineH = fontSize + 4;
+                const lines = txt.split("\n");
+                for (let i = 0; i < lines.length; i++) {
+                    ctx.fillText(lines[i], 12, textY + i * lineH);
+                }
+            }
             ctx.restore();
         };
 
@@ -236,7 +516,8 @@ function makeUITitleFactory() {
                 }
             }
 
-            const h = TITLE_PAD_TOP + TITLE_PAD_BOTTOM + (fontSize + 4);
+            const lineCount = Math.max(1, (this.value ?? "").toString().split("\n").length);
+            const h = TITLE_PAD_TOP + TITLE_PAD_BOTTOM + (fontSize + 4) * lineCount;
             return [200, h];
         };
 
@@ -261,14 +542,14 @@ function makeUIDividerFactory() {
 
 		        const isInner = isInnerDecoratorNode(n);
 		        const pad = DIVIDER_PAD_TOP;
-		        let color = "#666666";
+		        let color = "#ffffff";
 
 		        // IMPORTANT: Divider color must NEVER come from a TitleNode.
 		        // When the widget is shown on the Subgraph front node (linked OR promoted),
 		        // we must match it ONLY to inner DividerNode instances. Otherwise, the
 		        // divider will "steal" title_color (red) via index/fallback matching.
 		        if (isInner) {
-		            color = parseHex(getProp(n, propKey("divider_color"), "#666666"));
+		            color = parseHex(getProp(n, propKey("divider_color"), "#ffffff"));
 		        } else {
 		            const g = getInnerGraph(n);
 		            if (g) {
@@ -277,11 +558,11 @@ function makeUIDividerFactory() {
 		                    .filter(inNode => inNode.comfyClass === "DividerNode")
 		                    .sort((a, b) => (a.pos?.[1] ?? 0) - (b.pos?.[1] ?? 0));
 
-		                let matchedNode = null;
+		                let matchedNode = this.__uiDecorSrcNode || null;
 
 		                // Promotion usually prefixes the widget name with "<innerId>:..."
 		                const idMatch = this.name.match(/^(\d+):/);
-		                if (idMatch) {
+		                if (!matchedNode && idMatch) {
 		                    const nodeId = parseInt(idMatch[1]);
 		                    matchedNode = validDividers.find(nn => nn.id === nodeId) || null;
 		                }
@@ -297,7 +578,7 @@ function makeUIDividerFactory() {
 		                }
 
 		                if (matchedNode) {
-		                    color = parseHex(getProp(matchedNode, propKey("divider_color"), "#666666"));
+		                    color = parseHex(getProp(matchedNode, propKey("divider_color"), "#ffffff"));
 		                }
 		            }
 		        }
@@ -314,6 +595,10 @@ return [200, DIVIDER_PAD_TOP + 1 + DIVIDER_PAD_BOTTOM];
 
         w.serialize = true;
         w.serializeValue = () => null;
+        if (!_isTitleAttached) {
+            w.__uiDecorKind = "divider";
+            w.__uiDecorNode = node;
+        }
 
         return { widget: w };
     };
@@ -342,6 +627,18 @@ function makeUISpacerFactory() {
                     ctx.lineTo(8, y + h);
                     ctx.stroke();
                     ctx.restore();
+                } else {
+                    // Front (subgraph) node: when the spacer height changes,
+                    // refit the node height so it can also shrink.
+                    // Last height is kept on the subgraph node (keyed by widget
+                    // name) so it survives the frontend rebuilding this widget.
+                    const h = this.computeSize ? this.computeSize(widgetWidth)[1] : 0;
+                    const lastMap = n.__uiSpacerLastH || (n.__uiSpacerLastH = {});
+                    const key = this.name;
+                    if (lastMap[key] !== undefined && lastMap[key] !== h) {
+                        requestAnimationFrame(() => fitNodeHeight(n));
+                    }
+                    lastMap[key] = h;
                 }
             },
 
@@ -380,6 +677,8 @@ function makeUISpacerFactory() {
         });
         w.serialize = true;
         w.serializeValue = () => null;
+        w.__uiDecorKind = "spacer";
+        w.__uiDecorNode = node;
         return { widget: w };
     };
 }
@@ -412,6 +711,10 @@ function makeUINoteFactory() {
 
         w.serialize = true;
         w.serializeValue = () => getProp(node, kText, def);
+        w.__uiDecorKind = "note";
+        w.__uiDecorNode = node;
+        keepWidgetEnabled(w);
+        w.onPointerDown = decorTextPointerDown;
 
         w._measuredHeight = 60;
 
@@ -439,12 +742,12 @@ function makeUINoteFactory() {
                         .filter(inNode => inNode.comfyClass === "NoteNode")
                         .sort((a, b) => (a.pos?.[1] ?? 0) - (b.pos?.[1] ?? 0));
                     
-                    let matchedNode = null;
+                    let matchedNode = this.__uiDecorSrcNode || null;
                     const idMatch = this.name.match(/^(\d+):/);
-                    if (idMatch) {
+                    if (!matchedNode && idMatch) {
                          const nodeId = parseInt(idMatch[1]);
                          matchedNode = validNotes.find(n => n.id === nodeId);
-                    } else {
+                    } else if (!matchedNode) {
                         const outerNotes = n.widgets.filter(wd => wd.type === "text" && wd.name.includes("note")); 
                         const myOuterIndex = outerNotes.indexOf(this);
                         if (myOuterIndex >= 0 && myOuterIndex < validNotes.length) {
@@ -453,7 +756,7 @@ function makeUINoteFactory() {
                     }
                     
                     if (matchedNode) {
-                        txt = getProp(matchedNode, propKey("note_text"), "Enter note text...");
+                        txt = getProp(matchedNode, propKey("note_text"), txt);
                         color = parseHex(getProp(matchedNode, propKey("note_color"), "#aaaaaa"));
                         bgColor = parseHex(getProp(matchedNode, propKey("note_bg_color"), "#222222"));
                         fontSize = Number(getProp(matchedNode, propKey("note_font_size"), 12));
@@ -510,8 +813,10 @@ function makeUINoteFactory() {
             ctx.fillStyle = color;
             ctx.textBaseline = "top";
             
-            for (let i = 0; i < lines.length; i++) {
-                ctx.fillText(lines[i], margin + padX, drawY + padTop + lineOffsetY + (i * lineHeight));
+            if (!this.__uiEditing) {
+                for (let i = 0; i < lines.length; i++) {
+                    ctx.fillText(lines[i], margin + padX, drawY + padTop + lineOffsetY + (i * lineHeight));
+                }
             }
             
             ctx.restore();
@@ -687,15 +992,15 @@ function addSimpleColorControls(node, propName, defaultHex, labelOverride) {
         }
 
         canvas.onmousedown = handleCanvasDown;
-        window.onmousemove = handleCanvasMove;
-        window.onmouseup = handleCanvasUp;
+        window.addEventListener("mousemove", handleCanvasMove);
+        window.addEventListener("mouseup", handleCanvasUp);
         
         const closeBtn = document.createElement("button");
         closeBtn.textContent = "Close";
         closeBtn.onclick = () => { 
             document.body.removeChild(overlay); 
-            window.onmousemove = null; 
-            window.onmouseup = null; 
+            window.removeEventListener("mousemove", handleCanvasMove);
+            window.removeEventListener("mouseup", handleCanvasUp);
         };
         
         panel.appendChild(canvas);
@@ -710,12 +1015,6 @@ function addSimpleColorControls(node, propName, defaultHex, labelOverride) {
 
 
 /* ---------------- add node-face controls ---------------- */
-function mirrorLinkState(innerNode, inputName) {
-    const inp = (innerNode.inputs || []).find(i => i?.name === inputName);
-    const linked = !!(inp && inp.link != null);
-    setProp(innerNode, propKey(`linked_${inputName}`), linked);
-}
-
 function addTitleControls(node) {
     const sizeKey = propKey("title_font_size");
     const initSize = Number(getProp(node, sizeKey, 14));
@@ -745,36 +1044,10 @@ function addTitleControls(node) {
     );
 
     addSimpleColorControls(node, "title_color", "#ffffff", "color");
-
-    const prevOnConfigure = node.onConfigure;
-    node.onConfigure = function (o) {
-        mirrorLinkState(node, "title");
-        mirrorLinkState(node, "divider_in");
-        if (prevOnConfigure) prevOnConfigure.call(this, o);
-    };
-
-    const prevOnFG = node.onDrawForeground;
-    node.onDrawForeground = function (ctx) {
-        mirrorLinkState(node, "title");
-        mirrorLinkState(node, "divider_in");
-        if (prevOnFG) prevOnFG.call(this, ctx);
-    };
 }
 
 function addDividerControls(node) {
     addSimpleColorControls(node, "divider_color", "#ffffff", "color");
-
-    const prevOnConfigure = node.onConfigure;
-    node.onConfigure = function (o) {
-        mirrorLinkState(node, "divider");
-        if (prevOnConfigure) prevOnConfigure.call(this, o);
-    };
-
-    const prevOnFG = node.onDrawForeground;
-    node.onDrawForeground = function (ctx) {
-        mirrorLinkState(node, "divider");
-        if (prevOnFG) prevOnFG.call(this, ctx);
-    };
 }
 
 function addSpacerControls(node) {
@@ -789,23 +1062,12 @@ function addSpacerControls(node) {
         (v) => {
             const nv = Math.max(0, Math.min(1000, Math.round(Number(v) || 0)));
             setProp(node, sizeKey, nv);
-            node.setDirtyCanvas(true, true);
+            fitNodeHeight(node);
+            refitParentSubgraphNodes(node);
             if (app.canvas) app.canvas.setDirty(true, true);
         },
         { serialize: false, precision: 0, min: 0, max: 1000, step: 10 }
     );
-
-    const prevOnConfigure = node.onConfigure;
-    node.onConfigure = function (o) {
-        mirrorLinkState(node, "spacer");
-        if (prevOnConfigure) prevOnConfigure.call(this, o);
-    };
-
-    const prevOnFG = node.onDrawForeground;
-    node.onDrawForeground = function (ctx) {
-        mirrorLinkState(node, "spacer");
-        if (prevOnFG) prevOnFG.call(this, ctx);
-    };
 }
 
 function addNoteControls(node) {
@@ -829,18 +1091,6 @@ function addNoteControls(node) {
 
     // Remove the manual text widget addition
     // The factory handles the main widget.
-    
-    const prevOnConfigure = node.onConfigure;
-    node.onConfigure = function (o) {
-        mirrorLinkState(node, "note");
-        if (prevOnConfigure) prevOnConfigure.call(this, o);
-    };
-
-    const prevOnFG = node.onDrawForeground;
-    node.onDrawForeground = function (ctx) {
-        mirrorLinkState(node, "note");
-        if (prevOnFG) prevOnFG.call(this, ctx);
-    };
 }
 
 /* ---------------- register ---------------- */
@@ -863,5 +1113,19 @@ app.registerExtension({
         if (node.comfyClass === "DividerNode") addDividerControls(node);
         if (node.comfyClass === "SpacerNode") addSpacerControls(node);
         if (node.comfyClass === "NoteNode") addNoteControls(node);
+        installDecorHostWidgets(node);
+    },
+    loadedGraphNode(node) {
+        installDecorHostWidgets(node);
+    },
+    afterConfigureGraph() {
+        try {
+            const graphs = [app.graph, ...(app.graph?.subgraphs?.values?.() ?? [])];
+            for (const g of graphs) {
+                for (const n of (g?._nodes ?? g?.nodes ?? [])) installDecorHostWidgets(n);
+            }
+        } catch (e) {
+            console.warn("[UI Decorators] host widget install failed:", e);
+        }
     }
 });

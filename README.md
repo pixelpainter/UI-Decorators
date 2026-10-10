@@ -7,6 +7,8 @@
 
 > [!IMPORTANT]
 > **Update (v1.1.0):** A change in the ComfyUI frontend's subgraph widget system broke UI Decorators on newer versions. This release restores full functionality on current frontend versions (tested on 1.52.7) and remains backwards compatible with older versions.
+>
+> **New:** UI Title and UI Note text is now multiline and editable in place, both inside the subgraph and on the subgraph front. Edits apply instantly and are saved with the workflow.
 
 UI Decorators for Comfyui is a set of 4 nodes to enhance frontside SubGraph usability and organization.<br/>
 All node widgets are linkable and promotable from the SubGraph canvas.<br/>   

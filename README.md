@@ -8,7 +8,7 @@
 > [!IMPORTANT]
 > **Update (v1.1.0):** A change in the ComfyUI frontend's subgraph widget system broke UI Decorators on newer versions. This release restores full functionality on current frontend versions (tested on 1.52.7) and remains backwards compatible with older versions.
 
-UI Decorators for Comfyui is a set of 4 nodes to enhance frontside SubGraph usability and organization. If you like these nodes, please think about giving me a star<br/>
+UI Decorators for Comfyui is a set of 4 nodes to enhance frontside SubGraph usability and organization.<br/>
 All node widgets are linkable and promotable from the SubGraph canvas.<br/>   
 $\color{Aquamarine}{\textbf{Please watch the short video at the end of the description for a clear explanation of usage and functionailty.}}$<br/>
 

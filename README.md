@@ -1,3 +1,10 @@
+[![ComfyUI Registry](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.comfy.org%2Fnodes%2FUI-Decorators&query=%24.latest_version.version&label=ComfyUI%20Registry&prefix=v&color=1a56db)](https://registry.comfy.org/nodes/UI-Decorators)
+[![Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.comfy.org%2Fnodes%2FUI-Decorators&query=%24.downloads&label=downloads&color=2fbc06)](https://registry.comfy.org/nodes/UI-Decorators)
+[![GitHub stars](https://img.shields.io/github/stars/pixelpainter/UI-Decorators?style=social)](https://github.com/pixelpainter/UI-Decorators/stargazers)
+[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-%E2%98%95-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/pixelpainter)
+
+⭐ If these nodes save you time, please give them a star to show your appreciation, a star also helps other ComfyUI users find them.
+
 > [!IMPORTANT]
 > **Update (v1.1.0):** A change in the ComfyUI frontend's subgraph widget system broke UI Decorators on newer versions. This release restores full functionality on current frontend versions (tested on 1.52.7) and remains backwards compatible with older versions.
 

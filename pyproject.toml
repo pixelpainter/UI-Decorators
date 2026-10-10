@@ -1,6 +1,6 @@
 [project]
 name = "UI-Decorators"
-description = "UI Decorators is a set of 4 nodes to enhance frontside SubGraph usability and organization.All node widgets are linkable and promotable from the SubGraph canvas."
+description = "UI Decorators is a set of 4 nodes to enhance frontside SubGraph usability and organization. All node widgets are linkable and promotable from the SubGraph canvas."
 version = "1.1.0"
 license = {file = "LICENSE"} 
 # classifiers = [
